@@ -1,0 +1,271 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Date: Fri, 30 Aug 2024 08:09:39 -0400
+Subject: Revert "remove deprecated SplitHostname"
+
+This reverts commit 4894124079e525c3c3c5c8aacaa653b5499004e9.
+
+Needed by docker-registry 2.8.3
+---
+ normalize_test.go | 32 ++++++++++++++++----------------
+ reference.go      | 16 +++++++++++++---
+ reference_test.go | 41 ++++++++++++++++++++++-------------------
+ 3 files changed, 51 insertions(+), 38 deletions(-)
+
+diff --git a/normalize_test.go b/normalize_test.go
+index 129aaf1..002181b 100644
+--- a/normalize_test.go
++++ b/normalize_test.go
+@@ -498,62 +498,62 @@ func TestNormalizedSplitHostname(t *testing.T) {
+ 	tests := []struct {
+ 		input  string
+ 		domain string
+-		path   string
++		name   string
+ 	}{
+ 		{
+ 			input:  "test.com/foo",
+ 			domain: "test.com",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "test_com/foo",
+ 			domain: "docker.io",
+-			path:   "test_com/foo",
++			name:   "test_com/foo",
+ 		},
+ 		{
+ 			input:  "docker/migrator",
+ 			domain: "docker.io",
+-			path:   "docker/migrator",
++			name:   "docker/migrator",
+ 		},
+ 		{
+ 			input:  "test.com:8080/foo",
+ 			domain: "test.com:8080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "test-com:8080/foo",
+ 			domain: "test-com:8080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "foo",
+ 			domain: "docker.io",
+-			path:   "library/foo",
++			name:   "library/foo",
+ 		},
+ 		{
+ 			input:  "xn--n3h.com/foo",
+ 			domain: "xn--n3h.com",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "xn--n3h.com:18080/foo",
+ 			domain: "xn--n3h.com:18080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "docker.io/foo",
+ 			domain: "docker.io",
+-			path:   "library/foo",
++			name:   "library/foo",
+ 		},
+ 		{
+ 			input:  "docker.io/library/foo",
+ 			domain: "docker.io",
+-			path:   "library/foo",
++			name:   "library/foo",
+ 		},
+ 		{
+ 			input:  "docker.io/library/foo/bar",
+ 			domain: "docker.io",
+-			path:   "library/foo/bar",
++			name:   "library/foo/bar",
+ 		},
+ 	}
+ 	for _, tc := range tests {
+@@ -564,12 +564,12 @@ func TestNormalizedSplitHostname(t *testing.T) {
+ 			if err != nil {
+ 				t.Errorf("error parsing name: %s", err)
+ 			}
+-
+-			if domain := Domain(named); domain != tc.domain {
++			domain, name := SplitHostname(named) //nolint:staticcheck // Ignore SA1019: SplitHostname is deprecated.
++			if domain != tc.domain {
+ 				t.Errorf("unexpected domain: got %q, expected %q", domain, tc.domain)
+ 			}
+-			if path := Path(named); path != tc.path {
+-				t.Errorf("unexpected name: got %q, expected %q", path, tc.path)
++			if name != tc.name {
++				t.Errorf("unexpected name: got %q, expected %q", name, tc.name)
+ 			}
+ 		})
+ 	}
+diff --git a/reference.go b/reference.go
+index 900398b..79d1dfa 100644
+--- a/reference.go
++++ b/reference.go
+@@ -170,9 +170,6 @@ func Path(named Named) (name string) {
+ 	return path
+ }
+ 
+-// splitDomain splits a named reference into a hostname and path string.
+-// If no valid hostname is found, the hostname is empty and the full value
+-// is returned as name
+ func splitDomain(name string) (string, string) {
+ 	match := anchoredNameRegexp.FindStringSubmatch(name)
+ 	if len(match) != 3 {
+@@ -181,6 +178,19 @@ func splitDomain(name string) (string, string) {
+ 	return match[1], match[2]
+ }
+ 
++// SplitHostname splits a named reference into a
++// hostname and name string. If no valid hostname is
++// found, the hostname is empty and the full value
++// is returned as name
++//
++// Deprecated: Use [Domain] or [Path].
++func SplitHostname(named Named) (string, string) {
++	if r, ok := named.(namedRepository); ok {
++		return r.Domain(), r.Path()
++	}
++	return splitDomain(named.Name())
++}
++
+ // Parse parses s and returns a syntactically valid Reference.
+ // If an error was encountered it is returned, along with a nil Reference.
+ func Parse(s string) (Reference, error) {
+diff --git a/reference_test.go b/reference_test.go
+index ef1e911..3cc6ef9 100644
+--- a/reference_test.go
++++ b/reference_test.go
+@@ -298,7 +298,8 @@ func TestReferenceParse(t *testing.T) {
+ 				if named.Name() != tc.repository {
+ 					t.Errorf("unexpected repository: got %q, expected %q", named.Name(), tc.repository)
+ 				}
+-				if domain := Domain(named); domain != tc.domain {
++				domain, _ := SplitHostname(named)
++				if domain != tc.domain {
+ 					t.Errorf("unexpected domain: got %q, expected %q", domain, tc.domain)
+ 				}
+ 			} else if tc.repository != "" || tc.domain != "" {
+@@ -383,42 +384,42 @@ func TestWithNameFailure(t *testing.T) {
+ 	}
+ }
+ 
+-func TestDomainAndPath(t *testing.T) {
++func TestSplitHostname(t *testing.T) {
+ 	t.Parallel()
+ 	tests := []struct {
+ 		input  string
+ 		domain string
+-		path   string
++		name   string
+ 	}{
+ 		{
+ 			input:  "test.com/foo",
+ 			domain: "test.com",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "test_com/foo",
+ 			domain: "",
+-			path:   "test_com/foo",
++			name:   "test_com/foo",
+ 		},
+ 		{
+ 			input:  "test:8080/foo",
+ 			domain: "test:8080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "test.com:8080/foo",
+ 			domain: "test.com:8080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "test-com:8080/foo",
+ 			domain: "test-com:8080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "xn--n3h.com:18080/foo",
+ 			domain: "xn--n3h.com:18080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 	}
+ 	for _, tc := range tests {
+@@ -429,11 +430,12 @@ func TestDomainAndPath(t *testing.T) {
+ 			if err != nil {
+ 				t.Errorf("error parsing name: %s", err)
+ 			}
+-			if domain := Domain(named); domain != tc.domain {
++			domain, name := SplitHostname(named)
++			if domain != tc.domain {
+ 				t.Errorf("unexpected domain: got %q, expected %q", domain, tc.domain)
+ 			}
+-			if path := Path(named); path != tc.path {
+-				t.Errorf("unexpected name: got %q, expected %q", path, tc.path)
++			if name != tc.name {
++				t.Errorf("unexpected name: got %q, expected %q", name, tc.name)
+ 			}
+ 		})
+ 	}
+@@ -690,18 +692,18 @@ func TestParseNamed(t *testing.T) {
+ 	tests := []struct {
+ 		input  string
+ 		domain string
+-		path   string
++		name   string
+ 		err    error
+ 	}{
+ 		{
+ 			input:  "test.com/foo",
+ 			domain: "test.com",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input:  "test:8080/foo",
+ 			domain: "test:8080",
+-			path:   "foo",
++			name:   "foo",
+ 		},
+ 		{
+ 			input: "test_com/foo",
+@@ -722,7 +724,7 @@ func TestParseNamed(t *testing.T) {
+ 		{
+ 			input:  "docker.io/library/foo",
+ 			domain: "docker.io",
+-			path:   "library/foo",
++			name:   "library/foo",
+ 		},
+ 		// Ambiguous case, parser will add "library/" to foo
+ 		{
+@@ -748,11 +750,12 @@ func TestParseNamed(t *testing.T) {
+ 				return
+ 			}
+ 
+-			if domain := Domain(named); domain != tc.domain {
++			domain, name := SplitHostname(named)
++			if domain != tc.domain {
+ 				t.Errorf("unexpected domain: got %q, expected %q", domain, tc.domain)
+ 			}
+-			if path := Path(named); path != tc.path {
+-				t.Errorf("unexpected name: got %q, expected %q", path, tc.path)
++			if name != tc.name {
++				t.Errorf("unexpected name: got %q, expected %q", name, tc.name)
+ 			}
+ 		})
+ 	}
